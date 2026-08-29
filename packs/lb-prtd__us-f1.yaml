@@ -1,0 +1,214 @@
+# Lebanese travel document for Palestinian refugees → United States F-1 student visa
+#
+# CURATION NOTE
+# These rules are curated by hand from the sources listed at the bottom of this file.
+# Nothing here is scraped or model-generated, and the adversarial critic may only raise
+# findings that cite one of the `authority` strings below.
+#
+# LEAD TIMES ARE ESTIMATES. The p50/p90 day counts are planning heuristics, not published
+# figures — consular appointment waits in particular swing by an order of magnitude by post
+# and season. They are used to compute *risk*, and the UI must present them as estimates.
+# Documented facts (fee amounts, validity rules, max-age rules) are cited; timings are not.
+
+pack_id: lb-prtd__us-f1
+version: "0.1.0"
+
+corridor:
+  id: lb-prtd__us-f1
+  origin_label: "Lebanon (Palestinian refugee travel document)"
+  destination_label: "United States"
+  visa_type: "F-1"
+
+requirements:
+
+  # ---------------------------------------------------------------- base graph
+
+  - id: admission_offer
+    label: "Admission offer from an SEVP-certified school"
+    actor: institution
+    authority: "ICE SEVP: only SEVP-certified schools may enrol F-1 students and issue Form I-20"
+    produces: admission_letter
+    depends_on: []
+    lead_time_p50_days: 60
+    lead_time_p90_days: 120
+    guidance: >-
+      The school must be SEVP-certified or it cannot issue an I-20 at all, regardless of
+      how good the offer is.
+
+  - id: financial_evidence
+    label: "Evidence of funds for the first year"
+    actor: applicant
+    authority: "US Dept of State: applicant must demonstrate sufficient funds; officers trace source of funds"
+    produces: financial_statement
+    depends_on: []
+    lead_time_p50_days: 14
+    lead_time_p90_days: 30
+    constraints:
+      - kind: min_seasoning
+        document: financial_statement
+        min_days: 90
+        at: node:visa_interview
+        note: >-
+          A lump sum deposited shortly before applying is a documented refusal trigger.
+          The balance has to have aged, and its origin has to be explicable.
+    guidance: >-
+      Seasoning matters more than the headline balance. A smaller, older, explicable
+      balance outperforms a large one that appeared last month.
+
+  - id: i20_issued
+    label: "Form I-20 issued by the school"
+    actor: institution
+    authority: "ICE SEVP: Form I-20 issued on evidence of admission and financial capacity"
+    produces: i20
+    depends_on: [admission_offer, financial_evidence]
+    lead_time_p50_days: 14
+    lead_time_p90_days: 30
+
+  - id: sevis_fee_paid
+    label: "SEVIS I-901 fee paid"
+    actor: applicant
+    authority: "ICE SEVIS: Form I-901 fee of USD 350 required before the visa interview"
+    produces: sevis_receipt
+    depends_on: [i20_issued]
+    lead_time_p50_days: 1
+    lead_time_p90_days: 3
+    guidance: "USD 350. Requires the SEVIS ID printed on the I-20, so it cannot be paid earlier."
+
+  - id: ds160_prepared
+    label: "DS-160 completed and submitted"
+    actor: agent
+    authority: "US Dept of State: Form DS-160 online nonimmigrant visa application"
+    produces: visa_application_form
+    depends_on: [i20_issued]
+    lead_time_p50_days: 3
+    lead_time_p90_days: 7
+    guidance: >-
+      The nationality and country-of-birth fields have no clean answer for a stateless
+      applicant holding a refugee travel document. Entries must be internally consistent
+      with the travel document and the I-20, because a mismatch reads as an error and a
+      SEVIS-level typo can itself cause delay or refusal.
+
+  - id: visa_fee_paid
+    label: "Visa application (MRV) fee paid"
+    actor: applicant
+    authority: "US Dept of State: MRV application fee of USD 185 for F-1"
+    depends_on: [ds160_prepared]
+    lead_time_p50_days: 1
+    lead_time_p90_days: 3
+
+  - id: ties_evidence
+    label: "Non-immigrant intent evidence pack"
+    actor: agent
+    authority: "INA 214(b): presumption of immigrant intent, rebutted by the applicant"
+    depends_on: [i20_issued]
+    lead_time_p50_days: 7
+    lead_time_p90_days: 14
+    guidance: >-
+      The standard rebuttal is 'ties to your home country'. A stateless applicant has no
+      home state to be tied to, so the evidence has to be constructed differently —
+      around residence, family, continuing registration, and a concrete post-study plan
+      that does not depend on holding a nationality.
+
+  - id: interview_appointment
+    label: "Consular interview appointment secured"
+    actor: authority
+    authority: "US Dept of State: interview scheduling is controlled by the consular post"
+    produces: appointment_confirmation
+    depends_on: [ds160_prepared, sevis_fee_paid, visa_fee_paid]
+    lead_time_p50_days: 21
+    lead_time_p90_days: 90
+    guidance: >-
+      Booked by the applicant on the official system — never by this software. Wait times
+      vary enormously by post and season; the p90 estimate is what drives the risk warning.
+
+  - id: visa_interview
+    label: "Visa interview and adjudication"
+    actor: authority
+    authority: "US Dept of State: visa validity may not exceed the validity of the travel document"
+    depends_on: [interview_appointment, ties_evidence]
+    lead_time_p50_days: 7
+    lead_time_p90_days: 30
+    constraints:
+      - kind: valid_at
+        document: travel_document
+        at: node:visa_interview
+        remediation: renew_travel_document
+        note: "The travel document must be valid on the day of the interview."
+      - kind: covers
+        document: travel_document
+        period: program
+        remediation: renew_travel_document
+        note: >-
+          A visa is not issued beyond the validity of the document it is placed in. A
+          Lebanese travel document issued for one or three years will not cover a
+          two-year programme, so the renewal has to happen before the interview, not after.
+
+  # ------------------------------------------------- remediation-only subgraph
+  # These never appear in the base graph. They are spliced in only when a constraint
+  # above fails and names them — which is what produces the cascade.
+
+  - id: renew_travel_document
+    label: "Renew Lebanese travel document"
+    actor: authority
+    authority: "Lebanon General Security: travel document for Palestinian refugees, 5 years with UNRWA vitality card, otherwise 1 or 3 years"
+    produces: travel_document
+    depends_on: [unrwa_registration_current, civil_extract_current]
+    lead_time_p50_days: 14
+    lead_time_p90_days: 45
+    remediation_only: true
+    applies_when:
+      nationality_status: [refugee_travel_document, stateless]
+    guidance: >-
+      Validity depends on UNRWA registration status: five years with a vitality card,
+      one or three years without. That difference decides whether a two-year programme
+      is coverable at all.
+
+  - id: unrwa_registration_current
+    label: "Current UNRWA registration card"
+    actor: applicant
+    authority: "UNRWA: registration card required to support a travel document application"
+    produces: unrwa_registration
+    depends_on: []
+    lead_time_p50_days: 7
+    lead_time_p90_days: 21
+    remediation_only: true
+    applies_when:
+      nationality_status: [refugee_travel_document, stateless]
+
+  - id: civil_extract_current
+    label: "Individual Civil Extract, issued within the last three years"
+    actor: authority
+    authority: "Lebanon General Security: Individual Civil Extract must have been issued within the last three years"
+    produces: civil_extract
+    depends_on: []
+    lead_time_p50_days: 3
+    lead_time_p90_days: 14
+    remediation_only: true
+    applies_when:
+      nationality_status: [refugee_travel_document, stateless]
+    constraints:
+      - kind: max_age_at_use
+        document: civil_extract
+        max_age_days: 1095
+        at: node:renew_travel_document
+        remediation: reissue_civil_extract
+        note: >-
+          An extract that was acceptable last year can go stale mid-campaign and block
+          the renewal that the visa depends on.
+
+  - id: reissue_civil_extract
+    label: "Obtain a fresh Individual Civil Extract"
+    actor: authority
+    authority: "Lebanon General Security: Individual Civil Extract must have been issued within the last three years"
+    produces: civil_extract
+    depends_on: []
+    lead_time_p50_days: 3
+    lead_time_p90_days: 14
+    remediation_only: true
+
+sources:
+  - "https://www.general-security.gov.lb/en/posts/21 — Lebanese General Security, travel documents and transit passes"
+  - "https://www.general-security.gov.lb/en/posts/151 — Lebanese General Security, the new travel document"
+  - "https://asylos.libguides.com/c.php?g=708493&p=5108924 — Asylos, travel documents for stateless Palestinians in Lebanon"
+  - "https://www.ice.gov/sevis — SEVP/SEVIS, Form I-20 and the I-901 fee"
+  - "https://travel.state.gov — US Department of State, DS-160, MRV fee, and F-1 guidance"

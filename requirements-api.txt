@@ -1,0 +1,11 @@
+# Runtime dependencies for both Cloud Run services.
+#
+# google-adk and google-cloud-firestore are only imported by the worker path, but the
+# two services share one image, so both are installed. Nothing here is a build-time
+# compile: all of these ship wheels for python:3.12-slim.
+pydantic>=2.9
+pyyaml>=6.0
+fastapi>=0.115
+uvicorn[standard]>=0.32
+google-cloud-firestore>=2.19
+google-adk>=2.8

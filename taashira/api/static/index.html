@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Taashira</title>
+<style>
+:root{
+  --bg:#0d1014; --panel:#151a21; --panel-2:#1b222b; --line:#28313d;
+  --ink:#e8ecf2; --muted:#8b97a8;
+  --ok:#3fb27f; --warn:#e0a03c; --bad:#e2685c; --crit:#7b8cff; --cascade:#c07fd8;
+  --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+a{color:var(--crit)}
+header{padding:20px 28px;border-bottom:1px solid var(--line);
+  display:flex;align-items:baseline;gap:18px;flex-wrap:wrap}
+h1{margin:0;font-size:21px;letter-spacing:-.02em;font-weight:650}
+h1 span{color:var(--muted);font-weight:400;font-size:13px;margin-left:8px}
+.corridor{color:var(--muted);font-size:13.5px}
+.badge{margin-left:auto;font:600 11px/1 var(--mono);letter-spacing:.08em;
+  padding:7px 11px;border-radius:4px;text-transform:uppercase}
+.badge.no{background:#3a1f1c;color:var(--bad)}
+.badge.yes{background:#16311f;color:var(--ok)}
+main{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:22px;padding:22px 28px;
+  align-items:start}
+@media(max-width:1080px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.panel h2{margin:0;padding:13px 16px;font-size:11px;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--muted);border-bottom:1px solid var(--line);font-weight:650}
+.binding{margin:0 28px;padding:13px 16px;background:#2a1a18;border:1px solid #4a2a26;
+  border-left:3px solid var(--bad);border-radius:6px;font-size:14px}
+.binding b{color:var(--bad);display:block;font-size:11px;letter-spacing:.09em;
+  text-transform:uppercase;margin-bottom:4px}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th{text-align:left;font:650 10px/1 var(--mono);letter-spacing:.09em;color:var(--muted);
+  padding:9px 14px;border-bottom:1px solid var(--line);text-transform:uppercase}
+td{padding:9px 14px;border-bottom:1px solid #1f262f;vertical-align:top}
+tr:last-child td{border-bottom:0}
+tr.crit td{background:rgba(123,140,255,.07)}
+td.n{font-family:var(--mono);font-size:12px;text-align:right;white-space:nowrap;
+  font-variant-numeric:tabular-nums}
+.node-label{font-weight:550}
+.node-id{font-family:var(--mono);font-size:11px;color:var(--muted);display:block;margin-top:2px}
+.depth{display:inline-block;width:0;overflow:visible;white-space:nowrap;
+  color:var(--cascade);font-family:var(--mono);font-size:11px}
+.pill{display:inline-block;font:600 10px/1 var(--mono);letter-spacing:.05em;
+  padding:4px 7px;border-radius:3px;text-transform:uppercase;white-space:nowrap}
+.s-satisfied{background:#16311f;color:var(--ok)}
+.s-ready{background:#1b2b3f;color:#6fa8dc}
+.s-blocked{background:#232a33;color:var(--muted)}
+.s-at_risk{background:#3a2a18;color:var(--warn)}
+.s-needs_human_review{background:#33243a;color:#c79bdd}
+.s-failed{background:#3a1f1c;color:var(--bad)}
+.tag-crit{background:rgba(123,140,255,.15);color:var(--crit)}
+.tag-cascade{background:rgba(192,127,216,.15);color:var(--cascade)}
+.late{color:var(--bad)}
+.viol{padding:13px 16px;border-bottom:1px solid #1f262f;font-size:13px}
+.viol:last-child{border-bottom:0}
+.viol .g{color:var(--bad);font-weight:600;font-size:11px;letter-spacing:.07em;text-transform:uppercase}
+.viol .d{margin:5px 0 6px}
+.viol .cite{color:var(--muted);font-size:11.5px;font-style:italic;line-height:1.4}
+.viol .rem{color:var(--cascade);font-family:var(--mono);font-size:11px;margin-top:5px}
+#feed{max-height:340px;overflow-y:auto;font-family:var(--mono);font-size:11.5px}
+.ev{padding:8px 14px;border-bottom:1px solid #1f262f;display:flex;gap:9px}
+.ev .t{color:var(--muted);white-space:nowrap}
+.ev.plan-changed .k{color:var(--crit)}
+.ev.node-at-risk .k{color:var(--warn)}
+.ev.campaign-infeasible .k{color:var(--bad)}
+.ev .k{font-weight:650}
+.ev .m{color:var(--muted);overflow-wrap:anywhere}
+.live{display:inline-flex;align-items:center;gap:6px;color:var(--muted);
+  font:600 10px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;padding:0 16px 11px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+.dot.on{animation:pulse 1.8s infinite}
+.meta{padding:13px 16px;font-size:12.5px;color:var(--muted);line-height:1.7}
+.meta b{color:var(--ink);font-weight:550}
+.empty{padding:26px 16px;color:var(--muted);text-align:center;font-size:13px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Taashira <span>تأشيرة</span></h1>
+  <div class="corridor" id="corridor">loading…</div>
+  <div class="badge" id="feasible">—</div>
+</header>
+
+<div id="bindingWrap"></div>
+
+<main>
+  <div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+    <section class="panel">
+      <h2>Campaign plan</h2>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>Requirement</th><th>State</th>
+            <th class="n">Earliest</th><th class="n">Needed by</th><th class="n">Slack</th>
+          </tr></thead>
+          <tbody id="nodes"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Refusal grounds detected</h2>
+      <div id="violations"></div>
+    </section>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:22px;min-width:0">
+    <section class="panel">
+      <h2>Live activity</h2>
+      <div id="feed"></div>
+      <div class="live"><span class="dot" id="dot"></span><span id="livetext">connecting</span></div>
+    </section>
+    <section class="panel">
+      <h2>Campaign</h2>
+      <div class="meta" id="meta"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+let campaignId = new URLSearchParams(location.search).get("id");
+
+async function j(u){ const r = await fetch(u); if(!r.ok) throw new Error(u+" -> "+r.status); return r.json(); }
+
+async function pickCampaign(){
+  if (campaignId) return campaignId;
+  const {campaigns} = await j("/api/campaigns");
+  if (campaigns.length) return campaigns[0].campaign_id;
+  return null;   // fall back to an unpersisted preview
+}
+
+function render(c){
+  $("#corridor").textContent = c.corridor || c.corridor_id;
+  const ok = c.feasible;
+  const b = $("#feasible");
+  b.textContent = ok ? "on track" : "will miss intake";
+  b.className = "badge " + (ok ? "yes" : "no");
+
+  $("#bindingWrap").innerHTML = c.binding_constraint
+    ? `<div class="binding"><b>Binding constraint</b>${esc(c.binding_constraint)}</div>` : "";
+
+  const crit = new Set(c.critical_path || []);
+  const nodes = [...c.nodes].sort((a,b)=>
+    (a.earliest_finish||"").localeCompare(b.earliest_finish||"") ||
+    a.requirement_id.localeCompare(b.requirement_id));
+
+  $("#nodes").innerHTML = nodes.map(n => {
+    const tags = [];
+    if (crit.has(n.requirement_id)) tags.push('<span class="pill tag-crit">critical</span>');
+    if (n.spliced_by) tags.push(`<span class="pill tag-cascade">cascade ${n.depth}</span>`);
+    const slack = n.slack_days === null ? "—"
+      : (n.slack_days < 0 ? `<span class="late">${n.slack_days}d</span>` : n.slack_days + "d");
+    return `<tr class="${crit.has(n.requirement_id)?'crit':''}">
+      <td><span class="node-label">${esc(n.label || n.requirement_id)}</span> ${tags.join(" ")}
+          <span class="node-id">${esc(n.requirement_id)}${n.spliced_by ? " ← " + esc(n.spliced_by) : ""}</span></td>
+      <td><span class="pill s-${n.state}">${n.state.replace(/_/g," ")}</span></td>
+      <td class="n">${n.earliest_finish || "—"}</td>
+      <td class="n">${n.latest_finish || "—"}</td>
+      <td class="n">${slack}</td></tr>`;
+  }).join("");
+
+  const vs = c.violations || [];
+  $("#violations").innerHTML = vs.length ? vs.map(v => `
+    <div class="viol">
+      <div class="g">${v.severity} · ${esc(v.constraint_kind)}</div>
+      <div class="d">${esc(v.detail || v.description)}</div>
+      <div class="cite">cites — ${esc(v.authority)}</div>
+      ${v.remediation_applied ? `<div class="rem">↳ spliced in: ${esc(v.remediation_applied)}</div>` : ""}
+    </div>`).join("") : `<div class="empty">No refusal grounds detected.</div>`;
+
+  const cascade = c.nodes.filter(n=>n.spliced_by).length;
+  $("#meta").innerHTML = `
+    <div><b>${esc(c.campaign_id)}</b></div>
+    <div>version <b>${c.version}</b> · <b>${c.nodes.length}</b> requirements</div>
+    <div><b>${cascade}</b> spliced by failing constraints</div>
+    <div>programme <b>${c.program.start}</b> → <b>${c.program.end}</b></div>
+    <div>target <b>${c.target_date}</b></div>
+    <div>pack <b>${esc(c.pack_id)}</b> v${esc(c.pack_version)}</div>`;
+}
+
+function esc(s){ return String(s??"").replace(/[&<>"]/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+
+function addEvent(e){
+  if (e.kind === "heartbeat") return;
+  const feed = $("#feed");
+  const cls = (e.kind||"").replace(/\./g,"-");
+  const when = e.occurred_at ? e.occurred_at.slice(11,19) : "";
+  const msg = e.payload?.summary || e.payload?.requirement_id || e.payload?.binding_constraint || "";
+  const row = document.createElement("div");
+  row.className = "ev " + cls;
+  row.innerHTML = `<span class="t">${when}</span><span class="k">${esc(e.kind||e.detail||"")}</span><span class="m">${esc(msg)}</span>`;
+  feed.prepend(row);
+  while (feed.children.length > 60) feed.lastChild.remove();
+}
+
+async function boot(){
+  campaignId = await pickCampaign();
+  if (!campaignId){
+    render(await j("/api/preview?applicant=stateless"));
+    $("#livetext").textContent = "preview — nothing persisted yet";
+    return;
+  }
+  render(await j("/api/campaign/" + campaignId));
+  (await j("/api/campaign/" + campaignId + "/events")).events.forEach(addEvent);
+
+  let version = null;
+  const es = new EventSource("/api/campaign/" + campaignId + "/stream");
+  es.onopen = () => { $("#dot").classList.add("on"); $("#livetext").textContent = "live"; };
+  es.onerror = () => { $("#dot").classList.remove("on"); $("#livetext").textContent = "reconnecting"; };
+  es.onmessage = async ev => {
+    const e = JSON.parse(ev.data);
+    if (e.kind === "heartbeat"){
+      // The worker writes a new version whenever the plan actually changes.
+      if (version !== null && e.version !== version) render(await j("/api/campaign/" + campaignId));
+      version = e.version;
+      return;
+    }
+    addEvent(e);
+  };
+}
+boot().catch(e => { $("#corridor").textContent = "error: " + e.message; });
+</script>
+</body>
+</html>
