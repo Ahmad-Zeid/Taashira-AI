@@ -48,6 +48,16 @@ class Applicability(BaseModel):
         return not (self.lacks_document and any(d in held for d in self.lacks_document))
 
 
+class WaitTimeSignal(BaseModel):
+    """Binds a requirement's lead time to a published consular wait time.
+
+    Only the published figure is read — never the booking system itself.
+    """
+
+    post: str = Field(description="Consular post as it appears in the published table.")
+    visa_class: str = "student"
+
+
 class Requirement(BaseModel):
     id: str = Field(pattern=r"^[a-z0-9_]+$")
     label: str
@@ -75,6 +85,10 @@ class Requirement(BaseModel):
     )
     optional: bool = False
     guidance: str | None = None
+    wait_time_signal: WaitTimeSignal | None = Field(
+        default=None,
+        description="When set, a live observation supersedes this requirement's lead estimate.",
+    )
 
     @model_validator(mode="after")
     def _lead_times_ordered(self) -> Requirement:

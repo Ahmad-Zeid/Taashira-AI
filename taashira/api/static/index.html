@@ -79,6 +79,29 @@ td.n{font-family:var(--mono);font-size:12px;text-align:right;white-space:nowrap;
 .meta{padding:13px 16px;font-size:12.5px;color:var(--muted);line-height:1.7}
 .meta b{color:var(--ink);font-weight:550}
 .empty{padding:26px 16px;color:var(--muted);text-align:center;font-size:13px}
+.actions{padding:12px 16px;display:flex;gap:9px;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+button{font:600 12px/1 inherit;padding:9px 13px;border-radius:5px;border:1px solid var(--line);
+  background:var(--panel-2);color:var(--ink);cursor:pointer}
+button:hover:not(:disabled){border-color:var(--crit);color:var(--crit)}
+button:disabled{opacity:.45;cursor:default}
+button.primary{background:#1e2a52;border-color:#33407a;color:#b8c4ff}
+label.file{display:inline-block}
+label.file input{display:none}
+.act{padding:12px 16px;border-bottom:1px solid #1f262f}
+.act:last-child{border-bottom:0}
+.act .ttl{font-weight:600;font-size:13.5px;margin-bottom:3px}
+.act .why{font-size:12.5px;color:var(--muted);line-height:1.45}
+.act .cite{font-size:11px;color:#6b7686;font-style:italic;margin-top:5px;line-height:1.35}
+.act .rid{font-family:var(--mono);font-size:10.5px;color:var(--cascade)}
+.verdict{padding:12px 16px;border-bottom:1px solid var(--line);font-size:13px}
+.verdict .v{font:700 11px/1 var(--mono);letter-spacing:.09em;text-transform:uppercase;
+  padding:5px 9px;border-radius:3px;background:#3a1f1c;color:var(--bad);margin-right:9px}
+.verdict .g{float:right;font-family:var(--mono);font-size:11px;color:var(--ok)}
+.sig{padding:11px 16px;font-size:12.5px;border-bottom:1px solid #1f262f;display:flex;
+  justify-content:space-between;gap:10px;align-items:baseline}
+.sig .src{color:var(--muted);font-size:11px;font-family:var(--mono)}
+.sig .d{font-family:var(--mono);font-weight:650}
+.sig .d.up{color:var(--warn)}
 </style>
 </head>
 <body>
@@ -106,8 +129,22 @@ td.n{font-family:var(--mono);font-size:12px;text-align:right;white-space:nowrap;
     </section>
 
     <section class="panel">
-      <h2>Refusal grounds detected</h2>
+      <h2>Refusal grounds detected by the planner</h2>
       <div id="violations"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Adversarial review &amp; next actions</h2>
+      <div class="actions">
+        <label class="file">
+          <input type="file" id="doc" accept="image/png,image/jpeg,image/webp,application/pdf">
+          <button class="primary" onclick="document.getElementById('doc').click()">Upload a document</button>
+        </label>
+        <button id="reviewBtn">Run adversarial review</button>
+        <span id="busy" style="align-self:center;color:var(--muted);font-size:12px"></span>
+      </div>
+      <div id="verdict"></div>
+      <div id="advice"><div class="empty">No review yet.</div></div>
     </section>
   </div>
 
@@ -116,6 +153,10 @@ td.n{font-family:var(--mono);font-size:12px;text-align:right;white-space:nowrap;
       <h2>Live activity</h2>
       <div id="feed"></div>
       <div class="live"><span class="dot" id="dot"></span><span id="livetext">connecting</span></div>
+    </section>
+    <section class="panel">
+      <h2>Published wait times</h2>
+      <div id="signals"></div>
     </section>
     <section class="panel">
       <h2>Campaign</h2>
@@ -201,6 +242,69 @@ function addEvent(e){
   while (feed.children.length > 60) feed.lastChild.remove();
 }
 
+async function renderReview(){
+  let d;
+  try { d = await j("/api/campaign/" + campaignId + "/review"); }
+  catch { return; }
+
+  const rate = Math.round((d.grounding_rate ?? 1) * 100);
+  $("#verdict").innerHTML = `
+    <div class="verdict">
+      <span class="g">${rate}% grounded &middot; ${d.dropped_findings?.length || 0} dropped</span>
+      <span class="v">${esc(d.verdict)}</span>${esc(d.summary)}
+    </div>`;
+
+  $("#advice").innerHTML = (d.actions || []).length
+    ? (d.headline ? `<div class="act"><div class="ttl">${esc(d.headline)}</div></div>` : "")
+      + d.actions.map(a => `
+        <div class="act">
+          <div class="ttl">${esc(a.title)}</div>
+          <div class="why">${esc(a.why)}</div>
+          <div class="cite"><span class="rid">${esc(a.requirement_id)}</span> &middot; cites ${esc(a.authority)}</div>
+        </div>`).join("")
+    : `<div class="empty">Review returned no actions.</div>`;
+}
+
+async function renderSignals(){
+  try {
+    const {signals} = await j("/api/signals");
+    $("#signals").innerHTML = signals.length ? signals.map(s => {
+      const longer = s.days != null && s.days > s.pack_estimate_days;
+      return `<div class="sig">
+        <div>${esc(s.post)} &middot; ${esc(s.visa_class)}
+          <div class="src">${esc(s.source)}${s.observed_on ? " &middot; " + s.observed_on : ""}</div></div>
+        <div class="d ${longer ? "up" : ""}">${s.days ?? "—"}d
+          <span class="src">est ${s.pack_estimate_days}d</span></div>
+      </div>`;
+    }).join("") : `<div class="empty">No signal-driven requirements.</div>`;
+  } catch { $("#signals").innerHTML = `<div class="empty">Signals unavailable.</div>`; }
+}
+
+function busy(text){ $("#busy").textContent = text || ""; }
+
+async function wireControls(){
+  $("#doc").addEventListener("change", async ev => {
+    const file = ev.target.files[0];
+    if (!file) return;
+    busy("uploading " + file.name + "…");
+    const body = new FormData();
+    body.append("file", file);
+    try {
+      const r = await fetch("/api/campaign/" + campaignId + "/documents", {method:"POST", body});
+      busy(r.ok ? "reading document — the agent will re-plan when it lands" : "upload failed");
+    } catch { busy("upload failed"); }
+    ev.target.value = "";
+  });
+
+  $("#reviewBtn").addEventListener("click", async () => {
+    $("#reviewBtn").disabled = true;
+    busy("adversarial review running on the worker…");
+    try { await fetch("/api/campaign/" + campaignId + "/review", {method:"POST"}); }
+    catch { busy("could not reach the API"); }
+    setTimeout(() => { $("#reviewBtn").disabled = false; }, 4000);
+  });
+}
+
 async function boot(){
   campaignId = await pickCampaign();
   if (!campaignId){
@@ -210,6 +314,9 @@ async function boot(){
   }
   render(await j("/api/campaign/" + campaignId));
   (await j("/api/campaign/" + campaignId + "/events")).events.forEach(addEvent);
+  await wireControls();
+  renderSignals();
+  renderReview();
 
   let version = null;
   const es = new EventSource("/api/campaign/" + campaignId + "/stream");
@@ -219,11 +326,16 @@ async function boot(){
     const e = JSON.parse(ev.data);
     if (e.kind === "heartbeat"){
       // The worker writes a new version whenever the plan actually changes.
-      if (version !== null && e.version !== version) render(await j("/api/campaign/" + campaignId));
+      if (version !== null && e.version !== version){
+        render(await j("/api/campaign/" + campaignId));
+        busy("");
+      }
       version = e.version;
       return;
     }
     addEvent(e);
+    if (e.kind === "document.ingested"){ busy(""); render(await j("/api/campaign/" + campaignId)); }
+    if (e.kind === "action.required"){ busy(""); renderReview(); }
   };
 }
 boot().catch(e => { $("#corridor").textContent = "error: " + e.message; });

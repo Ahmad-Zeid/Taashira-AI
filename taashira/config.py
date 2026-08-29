@@ -32,10 +32,15 @@ class Settings:
     topic_tick: str = "campaign-tick"
     topic_events: str = "campaign-events"
     topic_dead: str = "campaign-dead"
+    topic_jobs: str = "campaign-jobs"
 
     #: When false the API uses an in-memory store, so the planner and endpoints can be
     #: exercised with no cloud credentials at all.
     use_firestore: bool = True
+
+    #: Uploaded documents land here for the worker to read, then age out after a day.
+    #: The API can write to it; only the worker can read it.
+    uploads_bucket: str = ""
 
     labels: dict[str, str] = field(default_factory=dict)
 
@@ -49,6 +54,9 @@ class Settings:
             fast_model=os.getenv("TAASHIRA_FAST_MODEL", DEFAULT_FAST_MODEL),
             model_location=os.getenv("TAASHIRA_MODEL_LOCATION", DEFAULT_MODEL_LOCATION),
             use_firestore=os.getenv("TAASHIRA_USE_FIRESTORE", "1") != "0",
+            uploads_bucket=os.getenv(
+                "TAASHIRA_UPLOADS_BUCKET", f"{project}-uploads" if project else ""
+            ),
         )
 
 

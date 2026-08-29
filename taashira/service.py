@@ -12,10 +12,12 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import date
 
+from taashira.agents.schemas import ExtractedDocument
 from taashira.domain.campaign import Campaign, Event, EventKind
 from taashira.domain.documents import Applicant
 from taashira.domain.requirements import RequirementPack
 from taashira.domain.temporal import Interval
+from taashira.packs import load_pack_by_id
 from taashira.planner import PlanDiff, diff_plans, plan_campaign
 from taashira.store.base import CampaignStore
 
@@ -52,6 +54,7 @@ def replan(
     today: date,
     campaign_id: str | None = None,
     target_date: date | None = None,
+    observed_lead_days: dict[str, int] | None = None,
 ) -> ReplanResult:
     """Re-plan a campaign, persisting and announcing it only if something changed.
 
@@ -70,6 +73,7 @@ def replan(
         target_date=target_date,
         campaign_id=identifier,
         version=next_version,
+        observed_lead_days=observed_lead_days,
     )
 
     diff = diff_plans(previous, candidate)
@@ -129,3 +133,53 @@ def _emit(store: CampaignStore, campaign: Campaign, diff: PlanDiff) -> list[Even
         )
 
     return emitted
+
+
+async def ingest_document(
+    *,
+    store: CampaignStore,
+    campaign_id: str,
+    data: bytes,
+    mime_type: str,
+    config,
+    hint: str | None = None,
+    today: date | None = None,
+) -> tuple[ExtractedDocument, ReplanResult | None]:
+    """Read an uploaded document, add it to the dossier, and re-plan.
+
+    This is the moment the demo turns on: uploading a one-year travel document gives the
+    planner a real expiry date, the `covers` constraint fails, and the renewal cascade
+    appears without anyone asking for it.
+
+    Raw bytes go to the model and are then dropped. Only extracted dates and a redacted
+    reference are persisted.
+    """
+    from taashira.agents.extract import extract_document, to_identity_document
+
+    extracted = await extract_document(data, mime_type, config=config, hint=hint)
+
+    campaign = store.get_campaign(campaign_id)
+    if campaign is None:
+        return extracted, None
+
+    applicant = store.get_applicant(campaign.applicant_id)
+    if applicant is None:
+        return extracted, None
+
+    document = to_identity_document(extracted)
+    # Supersede rather than accumulate: a re-upload of the same kind replaces the old
+    # reading, so correcting a bad scan does not leave the stale one deciding constraints.
+    applicant.documents = [d for d in applicant.documents if d.kind != document.kind]
+    applicant.documents.append(document)
+    store.save_applicant(applicant)
+
+    result = replan(
+        store=store,
+        pack=load_pack_by_id(campaign.pack_id),
+        applicant=applicant,
+        program=campaign.program,
+        today=today or date.today(),
+        campaign_id=campaign_id,
+        target_date=campaign.target_date,
+    )
+    return extracted, result

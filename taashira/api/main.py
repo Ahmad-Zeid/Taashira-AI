@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 from datetime import date
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from taashira import __version__
@@ -24,6 +26,7 @@ from taashira.fixtures import (
     stateless_masters_applicant,
     well_documented_applicant,
 )
+from taashira.jobs import Job, JobKind, publish
 from taashira.packs import available_packs, load_pack_by_id
 from taashira.planner import plan_campaign
 from taashira.store import build_store
@@ -218,3 +221,107 @@ def preview(
         today=today or REFERENCE_TODAY,
     )
     return JSONResponse(_decorate(result))
+
+
+# ---------------------------------------------------------------- agent work
+# The API cannot call a model: its service account has no `aiplatform.user` binding.
+# Anything needing one is published as a job for the worker, which holds the only
+# identity permitted to reach Vertex AI. The security boundary and the async
+# architecture are the same decision.
+
+MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+ALLOWED_MIME = {"image/png", "image/jpeg", "image/webp", "application/pdf"}
+
+
+@app.post("/api/campaign/{campaign_id}/documents", status_code=202)
+async def upload_document(
+    campaign_id: str,
+    file: Annotated[UploadFile, File()],
+    hint: Annotated[str | None, Form()] = None,
+) -> JSONResponse:
+    """Accept a document image and hand it to the worker to read.
+
+    Returns 202: extraction is genuinely backgrounded, and the browser learns the result
+    from the event stream like it learns about everything else the agent does.
+    """
+    config = settings()
+    if _store().get_campaign(campaign_id) is None:
+        raise HTTPException(404, f"no campaign '{campaign_id}'")
+
+    mime = file.content_type or "application/octet-stream"
+    if mime not in ALLOWED_MIME:
+        raise HTTPException(415, f"unsupported type {mime}; accepted: {sorted(ALLOWED_MIME)}")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(422, "empty upload")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"file exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)}MB")
+
+    from google.cloud import storage
+
+    blob_name = f"{campaign_id}/{uuid.uuid4().hex}"
+    client = storage.Client(project=config.project_id)
+    client.bucket(config.uploads_bucket).blob(blob_name).upload_from_string(data, content_type=mime)
+
+    publish(
+        Job(
+            kind=JobKind.EXTRACT_DOCUMENT,
+            campaign_id=campaign_id,
+            payload={"blob": blob_name, "hint": hint},
+        ),
+        project=config.project_id,
+        topic=config.topic_jobs,
+    )
+    return JSONResponse({"status": "accepted", "bytes": len(data), "type": mime})
+
+
+@app.post("/api/campaign/{campaign_id}/review", status_code=202)
+def request_review(campaign_id: str) -> JSONResponse:
+    """Ask the worker to run the adversarial critic and the coach."""
+    config = settings()
+    if _store().get_campaign(campaign_id) is None:
+        raise HTTPException(404, f"no campaign '{campaign_id}'")
+
+    publish(
+        Job(kind=JobKind.REVIEW_CAMPAIGN, campaign_id=campaign_id),
+        project=config.project_id,
+        topic=config.topic_jobs,
+    )
+    return JSONResponse({"status": "accepted"})
+
+
+@app.get("/api/campaign/{campaign_id}/review")
+def get_review(campaign_id: str) -> JSONResponse:
+    """The latest grounded critic verdict and coach actions."""
+    review = _store().get_review(campaign_id)
+    if review is None:
+        raise HTTPException(404, "no review yet; POST to this path to request one")
+    return JSONResponse(review)
+
+
+@app.get("/api/signals")
+def signals() -> dict:
+    """Published wait times currently informing the plan, and where each came from."""
+    from taashira.signals import observe
+
+    readings = []
+    for pack_id in available_packs():
+        pack = load_pack_by_id(pack_id)
+        for requirement in pack.requirements:
+            signal = requirement.wait_time_signal
+            if signal is None:
+                continue
+            reading = observe(signal.post, signal.visa_class)
+            readings.append(
+                {
+                    "requirement_id": requirement.id,
+                    "post": signal.post,
+                    "visa_class": signal.visa_class,
+                    "days": reading.days if reading else None,
+                    "observed_on": str(reading.observed_on) if reading else None,
+                    "source": reading.source if reading else "unavailable",
+                    "pack_estimate_days": requirement.lead_time_p90_days,
+                }
+            )
+    return {"signals": readings}

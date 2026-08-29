@@ -198,11 +198,16 @@ def plan_campaign(
     target_date: date | None = None,
     campaign_id: str | None = None,
     version: int = 1,
+    observed_lead_days: dict[str, int] | None = None,
 ) -> Campaign:
     """Build a scheduled, constraint-checked campaign.
 
     `target_date` defaults to the first day of the programme — the immovable date the
     entire graph is scheduled backwards from.
+
+    `observed_lead_days` overrides a requirement's pack estimate with a real measurement,
+    which is how a published consular wait time reaches the schedule. A pack estimate is a
+    guess made once; an observation is what the queue looks like today.
     """
     target = target_date or program.start
     active = _base_graph(pack, applicant)
@@ -217,7 +222,8 @@ def plan_campaign(
     for _ in range(MAX_PASSES):
         deps = _dependency_map(pack, active, extra_deps)
         satisfied = _satisfied(pack, active, applicant, set(spliced_by))
-        lead_days = {rid: pack.by_id(rid).lead_time_p90_days for rid in active}
+        overrides = observed_lead_days or {}
+        lead_days = {rid: overrides.get(rid, pack.by_id(rid).lead_time_p90_days) for rid in active}
 
         ctx = PlanContext(today=today, target_date=target, program=program, applicant=applicant)
         floors, ceilings = _schedule_bounds(pack, active, ctx)

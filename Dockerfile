@@ -14,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements-api.txt
 
 COPY taashira/ ./taashira/
 COPY packs/ ./packs/
+# Only the wait-time snapshot; the synthetic document images are test fixtures and
+# have no business in a runtime image.
+COPY data/wait_times_snapshot.json ./data/wait_times_snapshot.json
 
 # Cloud Run supplies PORT; the default keeps `docker run` working locally.
 ENV PORT=8080

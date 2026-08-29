@@ -107,6 +107,22 @@ class FirestoreStore:
     def record_action(self, action: Action) -> bool:
         return self._create_once("actions", action.idempotency_key, action.model_dump(mode="json"))
 
+    def save_review(self, campaign_id: str, review: dict) -> None:
+        """Latest review only. History lives in the campaign versions, not here."""
+        self._db.collection("campaigns").document(campaign_id).collection("agent").document(
+            "review"
+        ).set(review)
+
+    def get_review(self, campaign_id: str) -> dict | None:
+        snap = (
+            self._db.collection("campaigns")
+            .document(campaign_id)
+            .collection("agent")
+            .document("review")
+            .get()
+        )
+        return snap.to_dict() if snap.exists else None
+
     def list_actions(self, campaign_id: str, limit: int = 100) -> list[Action]:
         snaps = (
             self._db.collection("actions")

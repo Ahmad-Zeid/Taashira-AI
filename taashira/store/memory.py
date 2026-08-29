@@ -18,6 +18,7 @@ class InMemoryStore:
         self._events: list[Event] = []
         self._actions: list[Action] = []
         self._seen_keys: set[str] = set()
+        self._reviews: dict[str, dict] = {}
 
     def save_applicant(self, applicant: Applicant) -> None:
         self._applicants[applicant.applicant_id] = applicant.model_copy(deep=True)
@@ -67,3 +68,10 @@ class InMemoryStore:
     def list_actions(self, campaign_id: str, limit: int = 100) -> list[Action]:
         matching = [a for a in self._actions if a.campaign_id == campaign_id]
         return [a.model_copy(deep=True) for a in matching[-limit:]]
+
+    def save_review(self, campaign_id: str, review: dict) -> None:
+        self._reviews[campaign_id] = dict(review)
+
+    def get_review(self, campaign_id: str) -> dict | None:
+        found = self._reviews.get(campaign_id)
+        return dict(found) if found else None

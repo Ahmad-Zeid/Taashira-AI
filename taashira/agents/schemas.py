@@ -77,3 +77,66 @@ class GroundedFindings(BaseModel):
     def grounding_rate(self) -> float:
         total = len(self.findings) + len(self.dropped)
         return 1.0 if total == 0 else len(self.findings) / total
+
+
+class CampaignSpec(BaseModel):
+    """Structured result of the intake conversation.
+
+    The chat exists to produce this and then get out of the way. Everything downstream
+    consumes typed state, never the transcript.
+    """
+
+    pack_id: str = Field(description="Requirement pack id for the corridor, e.g. lb-prtd__us-f1.")
+    program_start: date | None = Field(default=None, description="First day of the programme.")
+    program_end: date | None = Field(default=None, description="Last day of the programme.")
+    nationality_status: str | None = Field(
+        default=None,
+        description="One of: national, stateless, refugee_travel_document, contested.",
+    )
+    residence_country: str | None = Field(default=None, description="ISO-2 country code.")
+    documents_held: list[DocumentKind] = Field(
+        default_factory=list, description="Document kinds the applicant says they already hold."
+    )
+    missing_information: list[str] = Field(
+        default_factory=list,
+        description="What still has to be asked before a campaign can be planned.",
+    )
+    ready_to_plan: bool = Field(
+        default=False,
+        description="True only when pack_id and both programme dates are known.",
+    )
+    reply: str = Field(description="What to say to the applicant next. One short paragraph.")
+
+
+class NextAction(BaseModel):
+    """One thing the applicant should do next, traceable to a rule."""
+
+    requirement_id: str
+    title: str = Field(description="Imperative and concrete: 'Request a fresh civil extract'.")
+    why: str = Field(description="What breaks if this slips, in one sentence.")
+    authority: str = Field(
+        description="Verbatim `authority` from the pack. Ungrounded items are dropped."
+    )
+    urgency_days: int | None = Field(
+        default=None, description="Days of slack before this becomes the binding constraint."
+    )
+
+
+class CoachPlan(BaseModel):
+    """The advisor's answer: what to do, in order."""
+
+    headline: str = Field(description="One sentence on where the campaign stands.")
+    actions: list[NextAction] = Field(default_factory=list)
+
+
+class GroundedCoachPlan(BaseModel):
+    """Coach output after the same grounding filter the critic passes through."""
+
+    headline: str
+    actions: list[NextAction]
+    dropped: list[NextAction] = Field(default_factory=list)
+
+    @property
+    def grounding_rate(self) -> float:
+        total = len(self.actions) + len(self.dropped)
+        return 1.0 if total == 0 else len(self.actions) / total

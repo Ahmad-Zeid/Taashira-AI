@@ -117,9 +117,14 @@ requirements:
     depends_on: [ds160_prepared, sevis_fee_paid, visa_fee_paid]
     lead_time_p50_days: 21
     lead_time_p90_days: 90
+    wait_time_signal:
+      post: Beirut
+      visa_class: student
     guidance: >-
-      Booked by the applicant on the official system — never by this software. Wait times
-      vary enormously by post and season; the p90 estimate is what drives the risk warning.
+      Booked by the applicant on the official system — never by this software. The lead time
+      here is superseded by the wait time the State Department publishes for this post, so
+      when the queue lengthens the whole plan reschedules against a real number rather than
+      an estimate made once.
 
   - id: visa_interview
     label: "Visa interview and adjudication"

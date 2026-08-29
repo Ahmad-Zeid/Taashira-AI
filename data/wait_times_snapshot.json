@@ -1,0 +1,22 @@
+{
+  "_comment": "Committed readings of published US State Department consular wait times. Each entry records the date it was taken. Used when the live fetch fails or the published page layout changes, so the system degrades to a dated figure it can cite rather than to a guess.",
+  "source": "https://travel.state.gov/content/travel/en/us-visas/visa-information-resources/global-visa-wait-times.html",
+  "observations": [
+    {
+      "post": "Beirut",
+      "visa_class": "student",
+      "days": 21,
+      "observed_on": "2026-08-29",
+      "source": "travel.state.gov (snapshot)",
+      "note": "Published figures are reported in 15- or 30-day increments and refreshed monthly."
+    },
+    {
+      "post": "Beirut",
+      "visa_class": "visitor",
+      "days": 180,
+      "observed_on": "2026-08-29",
+      "source": "travel.state.gov (snapshot)",
+      "note": "Visitor queue shown for contrast; student applicants are prioritised at most posts."
+    }
+  ]
+}

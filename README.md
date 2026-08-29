@@ -54,19 +54,41 @@ Given the *same pack* and an applicant with an ordinary ten-year passport, it pr
 nodes and no remediation at all. The cascade is a function of the applicant's documents,
 not a hardcoded storyline.
 
+## How a campaign runs
+
+1. **Intake.** A short conversation establishes the corridor, the programme dates and the
+   applicant's status, and emits a typed `CampaignSpec`. The chat is the door, not the
+   product — everything downstream consumes typed state, never the transcript.
+2. **Documents.** The applicant photographs their papers. `DocumentExtractor` reads dates,
+   converts DD/MM/YYYY, refuses to guess an ambiguous one, and redacts document numbers to
+   the last four characters. Extraction updates the dossier, which **re-plans immediately**.
+3. **Planning.** The deterministic planner splices remediation subgraphs for every broken
+   constraint and reschedules everything downstream.
+4. **Adversarial review.** `ConsularCritic` argues for refusal; `CampaignCoach` turns that
+   into prioritised next actions. Both are filtered against the pack before display.
+5. **Background.** Cloud Scheduler wakes the worker daily. It refreshes published consular
+   wait times, re-plans every active campaign, and raises events **only when the plan
+   actually changed**.
+
 ## Architecture
 
 ```mermaid
 flowchart LR
-  SCH[Cloud Scheduler<br/>daily heartbeat] -->|publish| PS[(Pub/Sub<br/>campaign-tick)]
-  PS -->|push + OIDC| W[Cloud Run: worker<br/>ADK agents]
-  PS -.->|5 failed attempts| DLQ[(campaign-dead<br/>dead letter)]
+  SCH[Cloud Scheduler<br/>daily heartbeat] -->|publish| TICK[(Pub/Sub<br/>campaign-tick)]
+  BROWSER[Browser] -->|upload · review| API[Cloud Run: api<br/>FastAPI + SSE<br/>no model access]
+  API -->|job| JOBS[(Pub/Sub<br/>campaign-jobs)]
+  API --> GCS[(Cloud Storage<br/>uploads · 1-day TTL)]
+  TICK -->|push + OIDC| W[Cloud Run: worker<br/>ADK agents]
+  JOBS -->|push + OIDC| W
+  TICK -.->|5 attempts| DLQ[(campaign-dead)]
+  JOBS -.->|5 attempts| DLQ
+  GCS --> W
+  STATE[/travel.state.gov<br/>published wait times/] --> W
   W --> VX[Vertex AI<br/>gemini-3.5-flash]
-  W --> FS[(Firestore<br/>campaigns · versions<br/>events · actions)]
-  API[Cloud Run: api<br/>FastAPI + SSE] --> FS
-  BROWSER[Operator UI] -->|SSE| API
+  W --> FS[(Firestore<br/>campaigns · versions<br/>events · reviews)]
+  API --> FS
+  BROWSER -->|SSE| API
   PACKS[/requirement packs<br/>versioned YAML/] --> W
-  PACKS --> API
 ```
 
 ### Two services, split by capability
@@ -79,6 +101,12 @@ flowchart LR
 The public surface physically cannot reach Vertex AI. That is enforced by IAM, not by
 convention, so compromising the browser-facing service cannot spend on inference.
 
+That constraint shapes the architecture rather than being bolted onto it: because the API
+cannot run an agent, uploading a document or asking for a review **publishes a job** and the
+worker picks it up. The security boundary and the asynchronous design are the same decision,
+which is why those operations are genuinely backgrounded rather than a synchronous call
+dressed up as one.
+
 ### The split that matters most
 
 **The model never does arithmetic.** Constraint evaluation, backward scheduling, critical
@@ -86,31 +114,41 @@ path and feasibility are deterministic Python with unit tests. The model extract
 documents and argues about evidence — jobs where judgement is the point. Dates are jobs where
 being plausibly wrong is catastrophic.
 
-### Agent topology — 7 LLM agents + 1 deterministic planner tool
+### Agent topology — 4 LLM agents, and two things deliberately left out
 
 ```
-CampaignOrchestrator            LlmAgent (root)
-├── IntakePipeline              SequentialAgent
-│   ├── DocumentExtractor       LlmAgent · multimodal · output_schema=ExtractedDocument
-│   └── DossierReconciler       LlmAgent · output_schema=ApplicantDelta
-├── RequirementFitter           LlmAgent · output_schema=CampaignSpec
-├── plan_campaign               FunctionTool → deterministic planner   ← no LLM
-├── ReviewLoop                  LoopAgent(max_iterations=3)
-│   ├── ConsularCritic          LlmAgent · output_schema=RefusalFindings
-│   └── DossierRepairer         LlmAgent · tools=[exit_loop]
-└── ActionExecutor              LlmAgent · tools=[write_calendar, render_pack, draft_request]
+DocumentExtractor   LlmAgent · multimodal · output_schema=ExtractedDocument
+IntakeAgent         LlmAgent · output_schema=CampaignSpec
+ConsularCritic      LlmAgent · output_schema=RefusalFindings      ← adversarial
+CampaignCoach       LlmAgent · output_schema=CoachPlan
 ```
+
+**Scheduling is not an agent.** Constraint evaluation, backward scheduling, critical path
+and feasibility are ordinary Python in `taashira/planner/`, unit-tested. A model that is
+plausibly wrong about a date costs an academic year, and you cannot unit-test a prompt the
+way you can test arithmetic.
+
+**Routing is not an agent.** Which agent runs is decided by a Pub/Sub job kind, not by a
+model choosing. A deterministic router cannot hallucinate a step, cannot loop, and fails
+into a dead-letter queue you can inspect.
+
+The agents are also not chained to each other. A deterministic grounding filter sits between
+the critic and the coach, so a finding citing an invented regulation is discarded before it
+can become advice. Chaining them through session state would be fewer lines and would let a
+fabricated rule propagate.
 
 ### Failure tolerance
 
-- **Hallucination is filtered, not trusted.** Every critic finding must cite an `authority`
-  string that exists in the loaded pack, verbatim. Findings that cite anything else are
-  discarded and counted — `GroundedFindings.grounding_rate` is a measured property, not a
-  claim. Live runs against `gemini-3.5-flash` currently ground at 100%.
-- **Loops are bounded.** `LoopAgent(max_iterations=3)`; `exit_loop` sets
-  `tool_context.actions.escalate`.
-- **Every agent has an `output_schema`.** Unparseable output is a visible failure, not a
-  silently-accepted string.
+- **Hallucination is filtered, not trusted.** Every critic finding and every coach action
+  must cite an `authority` string that exists in the loaded pack, verbatim. Anything else is
+  discarded and counted — `grounding_rate` is a measured property, not a claim. Live runs
+  against `gemini-3.5-flash` ground at 100%, and the filter is unit-tested against
+  deliberately fabricated citations.
+- **Every agent has an `output_schema`.** Unparseable output raises `AgentOutputInvalid`
+  rather than being accepted as a string.
+- **Unknown beats guessing, in the model too.** The extractor is instructed to return null
+  and name the field in `unreadable_fields` rather than infer an ambiguous date. Any
+  unreadable field, or confidence below 0.75, routes the document to human review.
 - **Unknown is not pass.** Constraint evaluation is tri-state. A document with no recorded
   expiry routes its node to `needs_human_review` rather than quietly succeeding — the exact
   failure that loses a visa.
@@ -118,6 +156,27 @@ CampaignOrchestrator            LlmAgent (root)
   `(campaign_id, version, kind, detail)` and written with Firestore `create`, so at-least-once
   delivery is deduplicated atomically.
 - **Poison messages dead-letter** after 5 attempts instead of retrying forever.
+
+## Published wait times, not scraped portals
+
+`interview_appointment` declares a signal:
+
+```yaml
+    wait_time_signal:
+      post: Beirut
+      visa_class: student
+```
+
+The worker reads the wait time the State Department **publishes** for that post and lets it
+supersede the pack's estimate. When the queue lengthens, every downstream date moves and the
+plan can go from feasible to infeasible with nobody present.
+
+Two sources, in that order: a live read of the published page, and a committed snapshot
+carrying the date it was taken. If the live read fails or the page layout changes, the system
+falls back **and reports which source it used**. It never invents a number, because a
+fabricated wait time would silently move every date in a months-long plan.
+
+This is reading a published figure. Taashira does not touch the appointment system.
 
 ## Requirement packs are data, not code
 
@@ -190,13 +249,19 @@ gcloud logging read 'resource.labels.service_name="taashira-worker"' --limit 20
 
 Stated plainly, because overstating what runs is a scoring failure:
 
-- **Real:** the planner, the cascade, the constraint engine, the Cloud Run services, the
-  Firestore state and version history, the Pub/Sub push loop, the Cloud Scheduler heartbeat,
-  and the adversarial critic — which runs against `gemini-3.5-flash` on Vertex AI and whose
-  findings quoted above are its actual output.
-- **Synthetic:** the applicant. Every document in [`taashira/fixtures.py`](taashira/fixtures.py)
-  is fabricated. No real identity document, number, or personal record appears anywhere in
-  this repository.
+- **Real:** the planner and its cascade; the constraint engine; both Cloud Run services;
+  Firestore state and version history; the Pub/Sub tick and job loops with their dead-letter
+  queue; the Cloud Scheduler heartbeat; document extraction, the adversarial critic and the
+  coach — all four agents run against `gemini-3.5-flash` on Vertex AI, and every agent output
+  quoted in this file is real output, not an illustration.
+- **Synthetic:** the applicant and their documents. Everything in
+  [`taashira/fixtures.py`](taashira/fixtures.py) is fabricated, and the document images in
+  `data/synthetic/` are generated by [`scripts/make_synthetic_docs.py`](scripts/make_synthetic_docs.py)
+  and stamped "SPECIMEN — NOT A REAL DOCUMENT". No real identity document, number, or
+  personal record appears anywhere in this repository.
+- **Estimated:** the lead times in the requirement packs, except where a published wait time
+  supersedes them. The packs say so in a header comment, and the UI shows the pack estimate
+  next to the observed figure.
 - **Never touched:** government and embassy portals. Taashira does not book appointments, does
   not submit applications, and does not automate any consular system. It assembles, schedules,
   argues, and warns. Every submission is made by a human.
@@ -206,7 +271,7 @@ Stated plainly, because overstating what runs is a scoring failure:
 | Requirement | Used |
 |---|---|
 | Gemini 3.5 or newer | `gemini-3.5-flash` on Vertex AI (`global` endpoint) |
-| Google agent framework | Google ADK 2.8 — `LlmAgent`, `SequentialAgent`, `LoopAgent`, `FunctionTool` |
+| Google agent framework | Google ADK 2.8 — `LlmAgent` with structured `output_schema`, multimodal input via `InMemoryRunner` |
 | Google Cloud services | Cloud Run, Firestore, Pub/Sub, Cloud Scheduler, Cloud Build, Artifact Registry |
 
 Python 3.12, Pydantic v2, FastAPI.
